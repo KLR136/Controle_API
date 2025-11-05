@@ -49,8 +49,11 @@ const adminController = {
             });
         } catch (error) {
             console.error('Error fetching products for admin:', error);
-            res.status(500).json({ success: false, error: 'Error fetching products for admin' });
-        });
+            res.status(500).json({ 
+                success: false, 
+                error: 'Error fetching products for admin'
+            });
+        }
     },
 
     createProduct: async (req, res) => {
