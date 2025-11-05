@@ -1,6 +1,15 @@
-app.post('/api/auth/register', async (req, res) => {
+const express = require('express');
+const authController = require('../controllers/authController');
+const { authenticateToken } = require('../middleware/auth');
+const pool = require('../config/database');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+const router = express.Router();
+
+router.post('/register', async (req, res) => {
     try {
-        const { email, password} = req.body;
+        const { email, password } = req.body;
 
         if (!email) {
             return res.status(400).json({ error: 'Email is required' });
@@ -8,6 +17,7 @@ app.post('/api/auth/register', async (req, res) => {
         if (!password) {
             return res.status(400).json({ error: 'Password is required' });
         }
+
         const [existingUsers] = await pool.execute(
             'SELECT id FROM users WHERE email = ?',
             [email]
@@ -30,9 +40,9 @@ app.post('/api/auth/register', async (req, res) => {
     }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+router.post('/login', async (req, res) => {
     try {
-        const {email, password} = req.body;
+        const { email, password } = req.body;
         const platform = req.headers['x-platform'] || 'web';
 
         if (!email) {
@@ -78,7 +88,6 @@ app.post('/api/auth/login', async (req, res) => {
             expiresAt.setDate(expiresAt.getDate() + 30);
         }
 
-
         await pool.execute(
             'INSERT INTO sessions (user_id, token, platform, expires_at) VALUES (?, ?, ?, ?)',
             [user.id, token, platform, expiresAt]
@@ -90,16 +99,14 @@ app.post('/api/auth/login', async (req, res) => {
                 id: user.id,
                 email: user.email,
                 role: user.role,
-            },
+            }
         });
-
-        res.status(200).json({ message: 'Login successful', token });
     } catch (error) {
         res.status(500).json({ error: 'Error during login' });
     }
 });
 
-app.post('/api/auth/logout', authenticateToken, async (req, res) => {
+router.post('/logout', authenticateToken, async (req, res) => {
     try {
         const token = req.headers['authorization'].split(' ')[1];
         await pool.execute('DELETE FROM sessions WHERE token = ?', [token]);
@@ -109,4 +116,25 @@ app.post('/api/auth/logout', authenticateToken, async (req, res) => {
     }
 });
 
-module.exports = app;
+router.get('/verify', authenticateToken, (req, res) => {
+    res.json({ message: 'Token is valid', user: req.user });
+});
+
+router.get('/profile', authenticateToken, async (req, res) => {
+    try {
+        const [users] = await pool.execute(
+            'SELECT id, email, role, created_at FROM users WHERE id = ?',
+            [req.user.id]
+        );
+
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        res.json({ user: users[0] });
+    } catch (error) {
+        res.status(500).json({ error: 'Error fetching user profile' });
+    }
+});
+
+module.exports = router;

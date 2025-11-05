@@ -1,4 +1,10 @@
-app.get('/api/admin/products', authenticateToken, requireAdmin, async (req, res) => {
+const express = require('express');
+const { authenticateToken, requireAdmin } = require('../middleware/auth');
+const pool = require('../config/database');
+
+const router = express.Router();
+
+router.get('/products', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
@@ -38,19 +44,20 @@ app.get('/api/admin/products', authenticateToken, requireAdmin, async (req, res)
     }
 });
 
-app.post('/api/admin/products', authenticateToken, requireAdmin, async (req, res) => {
+router.post('/products', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const { title, description, price, stock_quantity, tags } = req.body;
 
+        // Correction : "descriptiom" → "description"
         const [result] = await pool.execute(
-            `INSERT INTO products (title, price, descriptiom, stock_quantity) VALUES
-            (?, ?, ?, ?)`,
+            `INSERT INTO products (title, price, description, stock_quantity) VALUES (?, ?, ?, ?)`,
             [title, price, description, stock_quantity]
         );
 
         const product_id = result.insertId;
 
-        if (tags && tags.lenght > 0) {
+        // Correction : "lenght" → "length"
+        if (tags && tags.length > 0) {
             for (const tagName of tags) {
                 let [tagResult] = await pool.execute(
                     'SELECT id FROM tags WHERE name = ?',
@@ -58,7 +65,8 @@ app.post('/api/admin/products', authenticateToken, requireAdmin, async (req, res
                 );
 
                 let tagId;
-                if (tagResult.lenght === 0) {
+                // Correction : "lenght" → "length"
+                if (tagResult.length === 0) {
                     const [newTag] = await pool.execute(
                         'INSERT INTO tags (name) VALUES (?)',
                         [tagName]
@@ -85,14 +93,13 @@ app.post('/api/admin/products', authenticateToken, requireAdmin, async (req, res
     }
 });
 
-app.put('/api/admin/products/:id', authenticateToken, requireAdmin, async (req, res) => {
+router.put('/products/:id', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const { title, description, price, stock_quantity, tags } = req.body;
         const productId = req.params.id;
 
         await pool.execute(
-            `UPDATE products SET title = ?, description = ?, price = ?, stock_quantity = ?
-            WHERE id = ?`,
+            `UPDATE products SET title = ?, description = ?, price = ?, stock_quantity = ? WHERE id = ?`,
             [title, description, price, stock_quantity, productId]
         );
 
@@ -133,7 +140,7 @@ app.put('/api/admin/products/:id', authenticateToken, requireAdmin, async (req, 
     }
 });
 
-app.delete('/api/admin/products/:id', authenticateToken, requireAdmin, async (req, res) => {
+router.delete('/products/:id', authenticateToken, requireAdmin, async (req, res) => {
     try {
         await pool.execute('UPDATE products SET is_active = FALSE WHERE id = ?',
         [req.params.id]);
@@ -143,17 +150,16 @@ app.delete('/api/admin/products/:id', authenticateToken, requireAdmin, async (re
     }
 });
 
-app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
+router.get('/tags', authenticateToken, requireAdmin, async (req, res) => {
     try {
-        const [tags] = await pool.execute(
-            'SELECT * FROM tags ORDER BY name');
-            res.json(tags);
+        const [tags] = await pool.execute('SELECT * FROM tags ORDER BY name');
+        res.json(tags);
     } catch (error) {
         res.status(500).json({ error: 'Error fetching tags' });
     }
 });
 
-app.post('/api/admin/tags', authenticateToken, requireAdmin, async (req, res) => {
+router.post('/tags', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const { name } = req.body;
         const [result] = await pool.execute(
@@ -166,7 +172,7 @@ app.post('/api/admin/tags', authenticateToken, requireAdmin, async (req, res) =>
     }
 });
 
-app.delete('/api/admin/tags/:id', authenticateToken, requireAdmin, async (req, res) => {
+router.delete('/tags/:id', authenticateToken, requireAdmin, async (req, res) => {
     try {
         await pool.execute('DELETE FROM tags WHERE id = ?', [req.params.id]);
         res.json({ message: 'Tag deleted successfully' });
@@ -175,4 +181,4 @@ app.delete('/api/admin/tags/:id', authenticateToken, requireAdmin, async (req, r
     }
 });
 
-module.exports = app;
+module.exports = router;

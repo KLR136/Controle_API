@@ -1,8 +1,14 @@
-app.post('/api/orders', authenticateToken, async (req, res) => {
+const express = require('express');
+const { authenticateToken } = require('../middleware/auth');
+const pool = require('../config/database');
+
+const router = express.Router();
+
+router.post('/', authenticateToken, async (req, res) => {
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
-        const {shipping_address} = req.body;
+        const { shipping_address } = req.body;
 
         const [carts] = await connection.execute(
             `SELECT c.id, ci.product_id, ci.quantity, p.price, p.stock_quantity
@@ -26,6 +32,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
             }
             totalAmount += item.price * item.quantity;
         }
+
         for (const item of carts) {
             await connection.execute(
                 'UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?',
@@ -36,7 +43,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
         const cartId = carts[0].id;
         const [orderResult] = await connection.execute(
             'INSERT INTO orders (user_id, cart_id, shipping_address, total_amount) VALUES (?, ?, ?, ?)',
-            [req.user.id, cartId, shipping_address, total]
+            [req.user.id, cartId, shipping_address, totalAmount]  // Corrigé : total → totalAmount
         );
 
         await connection.execute(
@@ -58,7 +65,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
     }
 });
 
-app.get('/api/orders', authenticateToken, async (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
     try {
         const [orders] = await pool.execute(
             `SELECT o.*, c.id as cart_id
@@ -69,10 +76,59 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
             [req.user.id]
         );
 
-    res.json(orders);
+        res.json(orders);
     } catch (error) {
         res.status(500).json({ error: 'Error fetching orders' });
     }
 });
 
-module.exports = app;
+router.get('/:id', authenticateToken, async (req, res) => {
+    try {
+        const orderId = req.params.id;
+        
+        const [orders] = await pool.execute(
+            `SELECT o.*, c.id as cart_id, c.user_id
+             FROM orders o 
+             JOIN carts c ON o.cart_id = c.id 
+             WHERE o.id = ? AND c.user_id = ?`,
+            [orderId, req.user.id]
+        );
+
+        if (orders.length === 0) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+
+        const order = orders[0];
+
+        // Récupérer les produits de la commande
+        const [orderItems] = await pool.execute(
+            `SELECT ci.product_id, p.title, p.price, ci.quantity,
+                    (p.price * ci.quantity) as subtotal
+             FROM cart_items ci
+             JOIN products p ON ci.product_id = p.id
+             WHERE ci.cart_id = ?`,
+            [order.cart_id]
+        );
+
+        const orderDetails = {
+            id: order.id,
+            total_amount: parseFloat(order.total_amount),
+            shipping_address: order.shipping_address,
+            status: order.status,
+            created_at: order.created_at,
+            items: orderItems.map(item => ({
+                product_id: item.product_id,
+                title: item.title,
+                price: parseFloat(item.price),
+                quantity: item.quantity,
+                subtotal: parseFloat(item.subtotal)
+            }))
+        };
+
+        res.json({ order: orderDetails });
+    } catch (error) {
+        res.status(500).json({ error: 'Error fetching order' });
+    }
+});
+
+module.exports = router;

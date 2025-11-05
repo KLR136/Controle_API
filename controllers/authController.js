@@ -1,21 +1,21 @@
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const pool = require('../config/db');
-const { error } = require('console');
-const { verify } = require('crypto');
+const pool = require('../config/database');
 
-const adminController = {
+const authController = {
+    // Inscription d'un nouvel utilisateur
     register: async (req, res) => {
         try {
             const { email, password } = req.body;
 
-            if (!email) {
-                return res.status(400).json({ error: 'Email is required' });
-            }
-            if (!password) {
-                return res.status(400).json({ error: 'Password is required' });
+            if (!email || !password) {
+                return res.status(400).json({ 
+                    success: false,
+                    error: 'Email et mot de passe requis' 
+                });
             }
 
+            // Validation de l'email
             const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
             if (!emailRegex.test(email)) {
                 return res.status(400).json({
@@ -24,21 +24,23 @@ const adminController = {
                 });
             }
 
+            // Vérifier si l'utilisateur existe déjà
             const [existingUsers] = await pool.execute(
                 'SELECT id FROM users WHERE email = ?',
                 [email]
             );
 
-            
             if (existingUsers.length > 0) {
                 return res.status(409).json({
                     success: false,
-                    error: 'Email already in use'
+                    error: 'Cet email est déjà utilisé'
                 });
             }
 
+            // Hasher le mot de passe
             const hashedPassword = await bcrypt.hash(password, 12);
 
+            // Créer l'utilisateur
             const [result] = await pool.execute(
                 'INSERT INTO users (email, password) VALUES (?, ?)',
                 [email, hashedPassword]
@@ -46,45 +48,58 @@ const adminController = {
 
             res.status(201).json({
                 success: true,
-                message: 'User registered successfully',
-                data: { userId: result.insertId }
+                message: 'Utilisateur créé avec succès',
+                data: {
+                    user_id: result.insertId
+                }
             });
         } catch (error) {
-            console.error('Registration error:', error);
+            console.error('Erreur register:', error);
             res.status(500).json({
                 success: false,
-                error: 'Error during the creation of the account'
+                error: 'Erreur lors de la création du compte'
             });
         }
     },
 
+    // Connexion de l'utilisateur
     login: async (req, res) => {
         try {
             const { email, password } = req.body;
             const platform = req.headers['x-platform'] || 'web';
 
-            if (!email) {
-                return res.status(400).json({ error: 'Email is required' });
+            if (!email || !password) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Email et mot de passe requis'
+                });
             }
-            if (!password) {
-                return res.status(400).json({ error: 'Password is required' });
-            }
-        
+
+            // Récupérer l'utilisateur
             const [users] = await pool.execute(
                 'SELECT * FROM users WHERE email = ?',
                 [email]
             );
 
+            if (users.length === 0) {
+                return res.status(401).json({
+                    success: false,
+                    error: 'Identifiants invalides'
+                });
+            }
+
             const user = users[0];
 
+            // Vérifier le mot de passe
             const validPassword = await bcrypt.compare(password, user.password);
             if (!validPassword) {
                 return res.status(401).json({
                     success: false,
-                    error: 'Invalid identifiers'
+                    error: 'Identifiants invalides'
                 });
             }
 
+            // Déterminer la durée de la session
             let expiresIn;
             if (platform === 'kiosk') {
                 expiresIn = '1h';
@@ -92,16 +107,18 @@ const adminController = {
                 expiresIn = '30d';
             }
 
+            // Générer un token
             const token = jwt.sign(
-                {
-                    userId: user.id,
-                    email: user.email,
-                    role: user.role
+                { 
+                    userId: user.id, 
+                    email: user.email, 
+                    role: user.role 
                 },
                 process.env.JWT_SECRET || 'secret',
-                { expiresIn}
+                { expiresIn }
             );
 
+            // Calculer la date d'expiration
             const expiresAt = new Date();
             if (platform === 'kiosk') {
                 expiresAt.setHours(expiresAt.getHours() + 1);
@@ -109,20 +126,21 @@ const adminController = {
                 expiresAt.setDate(expiresAt.getDate() + 30);
             }
 
+            // Supprimer les sessions expirées de l'utilisateur
             await pool.execute(
                 'DELETE FROM sessions WHERE user_id = ? AND expires_at < NOW()',
                 [user.id]
             );
 
+            // Stocker la nouvelle session
             await pool.execute(
-                `INSERT INTO sessions (user_id, token, platform, expires_at)
-                VALUES (?, ?, ?, ?)`,
+                'INSERT INTO sessions (user_id, token, platform, expires_at) VALUES (?, ?, ?, ?)',
                 [user.id, token, platform, expiresAt]
             );
 
             res.json({
                 success: true,
-                message: 'Login successful',
+                message: 'Connexion réussie',
                 data: {
                     token,
                     user: {
@@ -133,31 +151,35 @@ const adminController = {
                 }
             });
         } catch (error) {
-            console.error('Login error:', error);
+            console.error('Erreur login:', error);
             res.status(500).json({
                 success: false,
-                error: 'Error during login'
+                error: 'Erreur de connexion'
             });
-        }
-
-        logout: async (req, res) => {
-            try {
-                const token = req.headers['authorization']?.split(' ')[1];
-                await pool.execute('DELETE FROM sessions WHERE token = ?', [token]);
-                res.json({
-                    success: true,
-                    message: 'Logout successful'
-                });
-            } catch (error) {
-                console.error('Logout error:', error);
-                res.status(500).json({
-                    success: false,
-                    error: 'Error during logout'
-                });
-            }
         }
     },
 
+    // Déconnexion
+    logout: async (req, res) => {
+        try {
+            const token = req.headers['authorization'].split(' ')[1];
+            
+            await pool.execute('DELETE FROM sessions WHERE token = ?', [token]);
+            
+            res.json({
+                success: true,
+                message: 'Déconnexion réussie'
+            });
+        } catch (error) {
+            console.error('Erreur logout:', error);
+            res.status(500).json({
+                success: false,
+                error: 'Erreur lors de la déconnexion'
+            });
+        }
+    },
+
+    // Vérification du token
     verify: async (req, res) => {
         try {
             res.json({
@@ -167,25 +189,26 @@ const adminController = {
                 }
             });
         } catch (error) {
-            console.error('Verification error:', error);
+            console.error('Erreur verify:', error);
             res.status(500).json({
                 success: false,
-                error: 'Error during verification'
+                error: 'Erreur de vérification'
             });
         }
     },
 
+    // Récupération du profil utilisateur
     getProfile: async (req, res) => {
         try {
             const [users] = await pool.execute(
-                'SELECT id, email, role FROM users WHERE id = ?',
+                'SELECT id, email, role, created_at FROM users WHERE id = ?',
                 [req.user.id]
             );
 
             if (users.length === 0) {
                 return res.status(404).json({
                     success: false,
-                    error: 'User not found'
+                    error: 'Utilisateur non trouvé'
                 });
             }
 
@@ -196,10 +219,10 @@ const adminController = {
                 }
             });
         } catch (error) {
-            console.error('Get profile error:', error);
+            console.error('Erreur getProfile:', error);
             res.status(500).json({
                 success: false,
-                error: 'Error during getting profile'
+                error: 'Erreur lors de la récupération du profil'
             });
         }
     }

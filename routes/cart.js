@@ -1,4 +1,10 @@
-app.get('/api/cart', authenticateToken, async (req, res) => {
+const express = require('express');
+const { authenticateToken } = require('../middleware/auth');
+const pool = require('../config/database');
+
+const router = express.Router();
+
+router.get('/', authenticateToken, async (req, res) => {
     try {
         const [carts] = await pool.execute(
             'SELECT c.id as cart_id, ci.product_id, p.title, p.price, ci.quantity, (p.price * ci.quantity) as subtotal FROM carts c JOIN cart_items ci ON c.id = ci.cart_id JOIN products p ON ci.product_id = p.id WHERE c.user_id = ? AND c.is_active = TRUE',
@@ -16,7 +22,7 @@ app.get('/api/cart', authenticateToken, async (req, res) => {
     }
 });
 
-app.post('/api/cart/items', authenticateToken, async (req, res) => {
+router.post('/items', authenticateToken, async (req, res) => {
     try {
         const { product_id, quantity } = req.body;
 
@@ -25,61 +31,61 @@ app.post('/api/cart/items', authenticateToken, async (req, res) => {
         }
     
 
-    const [products] = await pool.execute(
-        'SELECT stock_quantity FROM products WHERE id = ? AND is_active = TRUE',
-        [product_id]
-    );
-
-    if (products.length === 0) {
-        return res.status(404).json({ error: 'Product not found' });
-    }
-
-    if (products[0].stock_quantity < quantity) {
-        return res.status(400).json({ error: 'Insufficient stock quantity' });
-    }
-
-    let [carts] = await pool.execute(
-        'SELECT id FROM carts WHERE user_id = ? AND is_active = TRUE',
-        [req.user.id]
-    );
-
-    let cartId;
-    if (carts.length === 0) {
-        const [result] = await pool.execute(
-            'INSERT INTO carts (user_id, is_active) VALUES (?)',
-            [req.user.id, true]
+        const [products] = await pool.execute(
+            'SELECT stock_quantity FROM products WHERE id = ? AND is_active = TRUE',
+            [product_id]
         );
-        cartId = result.insertId;
-    } else {
-        cartId = carts[0].id;
-    }
 
-    const [existingItems] = await pool.execute(
-        'SELECT id, quantity FROM cart_items WHERE cart_id = ? AND product_id = ?',
-        [cartId, product_id]
-    );
+        if (products.length === 0) {
+            return res.status(404).json({ error: 'Product not found' });
+        }
 
-    if (existingItems.length > 0) {
-        const newQuantity = existingItems[0].quantity + quantity;
-        await pool.execute(
-            'UPDATE cart_items SET quantity = ? WHERE id = ?',
-            [newQuantity, existingItems[0].id]
+        if (products[0].stock_quantity < quantity) {
+            return res.status(400).json({ error: 'Insufficient stock quantity' });
+        }
+
+        let [carts] = await pool.execute(
+            'SELECT id FROM carts WHERE user_id = ? AND is_active = TRUE',
+            [req.user.id]
         );
-    } else {
-        await pool.execute(
-            'INSERT INTO cart_items (cart_id, product_id, quantity) VALUES (?, ?, ?)',
-            [cartId, product_id, quantity]
-        );
-    }
 
-    res.json({ message: 'Item added to cart successfully' });
+        let cartId;
+        if (carts.length === 0) {
+            const [result] = await pool.execute(
+                'INSERT INTO carts (user_id) VALUES (?)',
+                [req.user.id]
+            );
+            cartId = result.insertId;
+        } else {
+            cartId = carts[0].id;
+        }
+
+        const [existingItems] = await pool.execute(
+            'SELECT id, quantity FROM cart_items WHERE cart_id = ? AND product_id = ?',
+            [cartId, product_id]
+        );
+
+        if (existingItems.length > 0) {
+            const newQuantity = existingItems[0].quantity + quantity;
+            await pool.execute(
+                'UPDATE cart_items SET quantity = ? WHERE id = ?',
+                [newQuantity, existingItems[0].id]
+            );
+        } else {
+            await pool.execute(
+                'INSERT INTO cart_items (cart_id, product_id, quantity) VALUES (?, ?, ?)',
+                [cartId, product_id, quantity]
+            );
+        }
+
+        res.json({ message: 'Item added to cart successfully' });
 
     } catch (error) {
         res.status(500).json({ error: 'Error adding item to cart' });
     }
 });
 
-app.delete('/api/cart/items/:productId', authenticateToken, async (req, res) => {
+router.put('/items/:productId', authenticateToken, async (req, res) => {
     try {
         const { quantity } = req.body;
         const productId = req.params.productId;
@@ -88,37 +94,37 @@ app.delete('/api/cart/items/:productId', authenticateToken, async (req, res) => 
             return res.status(400).json({ error: 'Quantity must be greater than zero' });
         }
 
-    const [products] = await pool.execute(
-        'SELECT stock_quantity FROM products WHERE id = ?',
-        [productId]
-    );
+        const [products] = await pool.execute(
+            'SELECT stock_quantity FROM products WHERE id = ?',
+            [productId]
+        );
 
-    if (products[0].stock_quantity < quantity) {
-        return res.status(400).json({ error: 'Insufficient stock quantity' });
-    }
+        if (products[0].stock_quantity < quantity) {
+            return res.status(400).json({ error: 'Insufficient stock quantity' });
+        }
 
-    const [carts] = await pool.execute(
-        'SELECT id FROM carts WHERE user_id = ? AND is_active = TRUE',
-        [req.user.id]
-    );
+        const [carts] = await pool.execute(
+            'SELECT id FROM carts WHERE user_id = ? AND is_active = TRUE',
+            [req.user.id]
+        );
 
-    if (carts.length === 0) {
-        return res.status(404).json({ error: 'Cart not found' });
-    }
+        if (carts.length === 0) {
+            return res.status(404).json({ error: 'Cart not found' });
+        }
 
-    await pool.execute(
-        'UPDATE cart_items SET quantity = quantity - ? WHERE cart_id = ? AND product_id = ?',
-        [quantity, carts[0].id, productId]
-    );
+        await pool.execute(
+            'UPDATE cart_items SET quantity = ? WHERE cart_id = ? AND product_id = ?',
+            [quantity, carts[0].id, productId]
+        );
 
-    res.json({ message : 'Item quantity updated in cart successfully' });
+        res.json({ message: 'Item quantity updated in cart successfully' });
     } 
     catch (error) {
         res.status(500).json({ error: 'Error updating item in cart' });
     }
 });
 
-app.delete('/api/cart/items/:productId/remove', authenticateToken, async (req, res) => {
+router.delete('/items/:productId', authenticateToken, async (req, res) => {
     try {
         const productId = req.params.productId;
 
@@ -142,4 +148,4 @@ app.delete('/api/cart/items/:productId/remove', authenticateToken, async (req, r
     }
 });
 
-module.exports = app;
+module.exports = router;

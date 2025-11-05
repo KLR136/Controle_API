@@ -1,4 +1,10 @@
-appendFile.get('/api/products', async (req, res) => {
+const express = require('express');
+const productController = require('../controllers/productController');
+const pool = require('../config/database');
+
+const router = express.Router();
+
+router.get('/', async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
@@ -6,7 +12,7 @@ appendFile.get('/api/products', async (req, res) => {
         const offset = (page - 1) * limit;
 
         let query =
-        'SELECT p.*, GROUP_CONCAT(t.name) as tags FROM products p LEFT JOIN product_tags pt ON p.id = pt.product_id LEFT JOIN tags t ON pt.tag_id = t.id WHERE p.stock_quantity > 0 AND p.is_active = TRUE';
+            'SELECT p.*, GROUP_CONCAT(t.name) as tags FROM products p LEFT JOIN product_tags pt ON p.id = pt.product_id LEFT JOIN tags t ON pt.tag_id = t.id WHERE p.stock_quantity > 0 AND p.is_active = TRUE';
 
         const queryParams = [];
 
@@ -49,8 +55,51 @@ appendFile.get('/api/products', async (req, res) => {
     }
 });
 
-appendFile.get('/api/products/:id', async (req, res) => {
+router.get('/featured', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 8;
+        
+        const [products] = await pool.execute(
+            `SELECT p.*, GROUP_CONCAT(t.name) as tags
+             FROM products p
+             LEFT JOIN product_tags pt ON p.id = pt.product_id
+             LEFT JOIN tags t ON pt.tag_id = t.id
+             WHERE p.stock_quantity > 0 AND p.is_active = TRUE
+             GROUP BY p.id
+             ORDER BY p.stock_quantity DESC, p.created_at DESC
+             LIMIT ?`,
+            [limit]
+        );
 
+        res.json({
+            products: products.map(p => ({
+                ...p,
+                tags: p.tags ? p.tags.split(',') : [],
+            }))
+        });
+    } catch (error) {
+        res.status(500).json({ error: 'Error fetching featured products' });
+    }
+});
+
+router.get('/tags', async (req, res) => {
+    try {
+        const [tags] = await pool.execute(
+            `SELECT t.*, COUNT(pt.product_id) as product_count
+             FROM tags t
+             LEFT JOIN product_tags pt ON t.id = pt.tag_id
+             LEFT JOIN products p ON pt.product_id = p.id AND p.is_active = TRUE AND p.stock_quantity > 0
+             GROUP BY t.id
+             ORDER BY t.name`
+        );
+
+        res.json({ tags });
+    } catch (error) {
+        res.status(500).json({ error: 'Error fetching tags' });
+    }
+});
+
+router.get('/:id', async (req, res) => {
     try {
         const [products] = await pool.execute(
             'SELECT p.*, GROUP_CONCAT(t.name) as tags FROM products p LEFT JOIN product_tags pt ON p.id = pt.product_id LEFT JOIN tags t ON pt.tag_id = t.id WHERE p.id = ? AND p.is_active = TRUE GROUP BY p.id',
@@ -67,8 +116,8 @@ appendFile.get('/api/products/:id', async (req, res) => {
         res.json({ product });
 
     } catch (error) {
-        res.status(500).json({ error: 'Error fetching product' });
+        res.status(500).json({ error: 'Error fetching product by ID' });
     }
 });
 
-module.exports = app;
+module.exports = router;
