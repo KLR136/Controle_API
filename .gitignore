@@ -2,3 +2,7 @@ Package.lock.json
 Package.json
 node_modules/
 .env
+/models/index.js
+/models/Tag.js
+/models/User.js
+/models/Cart.js
